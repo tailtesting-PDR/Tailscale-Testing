@@ -1,0 +1,94 @@
+name: Ubuntu VPS
+
+on:
+  workflow_dispatch:
+
+jobs:
+  ubuntu-vps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: System Info
+        run: |
+          echo "=== SPECS ==="
+          echo "RAM  : $(free -h | grep Mem | awk '{print $2}')"
+          echo "CPU  : $(nproc) cores"
+          echo "Disk : $(df -h / | tail -1 | awk '{print $4}') free"
+          echo "OS   : $(lsb_release -d | cut -f2)"
+          echo "============="
+
+      - name: Install Tools + SSH
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y openssh-server curl wget git python3 python3-pip htop
+
+          # SSH password auth enable
+          sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
+          sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+          sudo systemctl restart ssh
+
+          # User banana
+          sudo useradd -m -s /bin/bash vpsuser
+          echo "vpsuser:ethernet" | sudo chpasswd
+          sudo usermod -aG sudo vpsuser
+
+          echo "SSH_USER=vpsuser" >> $GITHUB_ENV
+          echo "SSH_PASS=ethernet" >> $GITHUB_ENV
+
+      - name: Install Tailscale
+        run: |
+          curl -fsSL https://tailscale.com/install.sh | sh
+
+      - name: Connect Tailscale (OAuth Login Link)
+        run: |
+          # Ye login URL print karega — browser mein open karo!
+          sudo tailscale up --hostname=ubuntu-runner-$GITHUB_RUN_ID &
+
+          echo ""
+          echo "=========================================="
+          echo " 👆 TAILSCALE LOGIN URL UPAR DIKH RAHA HAI"
+          echo " Isko copy karo aur browser mein open karo"
+          echo " Apne Tailscale account se login karo!"
+          echo "=========================================="
+          echo ""
+
+          # Login ke liye wait
+          sleep 60
+
+          # IP fetch karo
+          TSIP=""
+          RETRIES=0
+          while [ -z "$TSIP" ] && [ $RETRIES -lt 20 ]; do
+            TSIP=$(tailscale ip -4 2>/dev/null)
+            sleep 5
+            RETRIES=$((RETRIES + 1))
+          done
+
+          if [ -z "$TSIP" ]; then
+            echo "❌ Tailscale login nahi hua!"
+            exit 1
+          fi
+
+          echo "TAILSCALE_IP=$TSIP" >> $GITHUB_ENV
+          echo "✅ Connected! IP: $TSIP"
+
+      - name: Show Access Info
+        run: |
+          echo ""
+          echo "================================"
+          echo "  🐧 UBUNTU VPS READY!          "
+          echo "================================"
+          echo "  IP       : $TAILSCALE_IP"
+          echo "  User     : $SSH_USER"
+          echo "  Password : $SSH_PASS"
+          echo "  Command  : ssh vpsuser@$TAILSCALE_IP"
+          echo "================================"
+          echo ""
+
+      - name: Keep Alive
+        run: |
+          while true; do
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] Ubuntu VPS Active 🟢"
+            sleep 300
+          done
